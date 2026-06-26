@@ -1,6 +1,6 @@
-# 📚 CampusMind — Development Run Guide
+# 📚 UniFlow — Development Run Guide
 
-This guide contains the verified commands and configuration steps to run the full **CampusMind** academic stack locally.
+This guide contains the verified commands and configuration steps to run the full **UniFlow** academic stack locally.
 
 ---
 
@@ -9,7 +9,7 @@ This guide contains the verified commands and configuration steps to run the ful
 All database and caching services run in Docker containers. Ensure **Docker Desktop** is running first.
 
 ```powershell
-# From the project root (CampusMind-main/)
+# From the project root (UniFlow-main/)
 docker-compose up -d
 ```
 
@@ -93,4 +93,4 @@ Ensure your `backend/.env` file is configured with valid **Google Gemini API Key
 ---
 
 ---
-© 2026 CampusMind Project. All documentation is current as of the latest **Optimization Phase**.
+© 2026 UniFlow Project. All documentation is current as of the latest **Optimization Phase**.
