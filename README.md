@@ -1,11 +1,11 @@
-# 🎓 CampusMind — The AI-Powered Academic Hub
+# 🎓 UniFlow — The AI-Powered Academic Hub
 
 > **Status**: 🚀 Fully Operational. *From static PDFs to interactive knowledge in seconds.*
 
 ---
 
 ## ✨ Experience Modern Academic AI
-CampusMind is a premium, bento-style classroom platform designed to turn your study materials into a living, breathing knowledge base. It bridge the gap between static files and deep understanding using the latest in **Google Gemini AI** and **LaTeX-ready** math rendering.
+UniFlow is a premium, bento-style classroom platform designed to turn your study materials into a living, breathing knowledge base. It bridge the gap between static files and deep understanding using the latest in **Google Gemini AI** and **LaTeX-ready** math rendering.
 
 ---
 
@@ -83,4 +83,4 @@ For a detailed log of the project's evolution and all implemented features from 
 ---
 
 ##  Summary
-CampusMind is more than a classroom hub; it’s an **intelligent ecosystem** for students and teachers. It combines a premium user experience with powerful AI automation to make learning more efficient, interactive, and visually stunning.
+UniFlow is more than a classroom hub; it’s an **intelligent ecosystem** for students and teachers. It combines a premium user experience with powerful AI automation to make learning more efficient, interactive, and visually stunning.
