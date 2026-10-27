@@ -3,7 +3,7 @@
 import { useClassrooms } from "@/app/hooks/useClassrooms";
 import { useAuth } from "@/app/context/auth-context";
 import { useSearchParams } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useEffect, useState, Suspense } from "react";
 import { Sidebar } from "@/app/components/Sidebar";
 import Header from "@/app/components/Header";
 import { ClassroomCard } from "@/app/components/ClassroomCard";
@@ -18,7 +18,7 @@ import {
 } from "lucide-react";
 import confetti from "canvas-confetti";
 
-export default function ClassroomsPage() {
+function ClassroomsPageContent() {
     const { user } = useAuth();
     const { classrooms, loading, createClassroom, joinClassroom } = useClassrooms();
     const [showCreate, setShowCreate] = useState(false);
@@ -275,5 +275,17 @@ export default function ClassroomsPage() {
                 )}
             </AnimatePresence>
         </div>
+    );
+}
+
+export default function ClassroomsPage() {
+    return (
+        <Suspense fallback={
+            <div className="flex h-screen items-center justify-center bg-slate-950">
+                <Loader2 className="w-8 h-8 text-indigo-500 animate-spin" />
+            </div>
+        }>
+            <ClassroomsPageContent />
+        </Suspense>
     );
 }

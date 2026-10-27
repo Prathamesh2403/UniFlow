@@ -7,11 +7,13 @@ Task retry, time limits, and serialization are configured here.
 """
 
 import os
+import ssl
 from celery import Celery
 from celery.signals import task_failure, task_retry, task_success
+from core.config import settings
 
-REDIS_URL = os.getenv("CELERY_BROKER_URL", "redis://localhost:6379/0")
-REDIS_RESULT_URL = os.getenv("CELERY_RESULT_BACKEND", REDIS_URL)
+REDIS_URL = os.getenv("CELERY_BROKER_URL") or settings.REDIS_URL or "redis://localhost:6379/0"
+REDIS_RESULT_URL = os.getenv("CELERY_RESULT_BACKEND") or REDIS_URL
 
 celery_app = Celery(
     "uniflow_worker",
@@ -20,7 +22,15 @@ celery_app = Celery(
     include=["api.services.ingestion"],
 )
 
+# Upstash TLS configuration
+if REDIS_URL.startswith("rediss://"):
+    celery_app.conf.update(
+        broker_use_ssl={"ssl_cert_reqs": ssl.CERT_NONE},
+        redis_backend_use_ssl={"ssl_cert_reqs": ssl.CERT_NONE},
+    )
+
 celery_app.conf.update(
+    broker_connection_retry_on_startup=True,
     # ── Serialization ─────────────────────────────────────────────
     task_serializer="json",
     result_serializer="json",

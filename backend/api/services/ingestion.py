@@ -43,7 +43,7 @@ from core.llm_router import (
     ingestion_key_manager,
 )
 from core.websocket import manager
-from database.chroma import get_chroma_collection
+from database.vector import upsert_chunks
 from database.mongo import get_db
 
 load_dotenv()
@@ -65,18 +65,25 @@ async def _extract_with_gemini(file_path: str) -> str:
     Upload file to Gemini File API and extract rich text (tables, equations, diagrams).
     Uses INGESTION key pool with INGESTION_MODEL_CHAIN and key rotation.
     """
-    client, key = ingestion_key_manager.get_client()
-    logger.info("[Tier 1] Uploading %s to Gemini File API...", file_path)
+    gemini_file = None
+    upload_attempts = max(len(ingestion_key_manager.keys), 3)
+    last_upload_err = None
 
-    # Upload the file
-    def _upload():
-        return client.files.upload(file=file_path)
+    for attempt in range(upload_attempts):
+        client, key = ingestion_key_manager.get_client()
+        logger.info("[Tier 1] Uploading %s to Gemini File API (attempt %d/%d)...", file_path, attempt + 1, upload_attempts)
+        try:
+            gemini_file = await asyncio.to_thread(client.files.upload, file=file_path)
+            break
+        except Exception as e:
+            last_upload_err = e
+            logger.warning("[Tier 1] Upload attempt %d failed: %s. Retrying...", attempt + 1, e)
+            ingestion_key_manager.mark_unhealthy(key, duration=30)
+            await asyncio.sleep(min(2 ** attempt, 5))
 
-    try:
-        gemini_file = await asyncio.to_thread(_upload)
-    except Exception as e:
-        logger.error("[Tier 1] Upload failed: %s", e)
-        raise
+    if not gemini_file:
+        logger.error("[Tier 1] Upload failed after %d attempts: %s", upload_attempts, last_upload_err)
+        raise RuntimeError(f"Gemini upload failed: {last_upload_err}")
 
     try:
         logger.info("[Tier 1] Extracting content via model chain: %s", INGESTION_MODEL_CHAIN)
@@ -110,50 +117,21 @@ async def _extract_with_gemini(file_path: str) -> str:
             try:
                 client.files.delete(name=gemini_file.name)
             except Exception as del_err:
-                logger.warning("[Tier 1] Failed to delete Gemini file %s: %s", gemini_file.name, del_err)
-        await asyncio.to_thread(_delete)
+                logger.warning("[Tier 1] Failed to delete Gemini file %s: %s", getattr(gemini_file, 'name', '?'), del_err)
+        if gemini_file:
+            await asyncio.to_thread(_delete)
 
 
 # ══════════════════════════════════════════════════════════════════════
-# TIER 2: Docling (local, free, structured)
-# ══════════════════════════════════════════════════════════════════════
-
-async def _extract_with_docling(file_path: str) -> str:
-    """
-    Extract text using Docling (local). Handles structured PDFs with tables.
-    Runs in a thread to avoid blocking the async event loop.
-    """
-    logger.info("[Tier 2] Extracting with Docling: %s", file_path)
-
-    def _run_docling() -> str:
-        from docling.document_converter import DocumentConverter
-        converter = DocumentConverter()
-        result = converter.convert(file_path)
-        return result.document.export_to_markdown()
-
-    try:
-        text = await asyncio.to_thread(_run_docling)
-        if not text or not text.strip():
-            raise RuntimeError("Docling returned empty text")
-        logger.info("[Tier 2] Docling extraction successful: %d characters", len(text))
-        return text
-    except ImportError:
-        raise RuntimeError("Docling is not installed. Add 'docling' to pyproject.toml dependencies.")
-    except Exception as e:
-        logger.error("[Tier 2] Docling failed: %s", e)
-        raise
-
-
-# ══════════════════════════════════════════════════════════════════════
-# TIER 3: PyMuPDF (local, free, text-only fallback)
+# TIER 2: PyMuPDF (local, free, text-first, fast fallback)
 # ══════════════════════════════════════════════════════════════════════
 
 async def _extract_with_pymupdf(file_path: str) -> str:
     """
-    Last-resort text extraction using PyMuPDF (fitz).
-    No table or image understanding — plain text only.
+    Fast local text extraction using PyMuPDF (fitz).
+    Handles standard digital PDFs in milliseconds.
     """
-    logger.warning("[Tier 3] Using PyMuPDF (text-only). Tables/images may be missing: %s", file_path)
+    logger.info("[Tier 2: PyMuPDF] Extracting text: %s", file_path)
 
     def _run_pymupdf() -> str:
         import fitz  # PyMuPDF
@@ -170,12 +148,42 @@ async def _extract_with_pymupdf(file_path: str) -> str:
         text = await asyncio.to_thread(_run_pymupdf)
         if not text or not text.strip():
             raise RuntimeError("PyMuPDF returned no text — file may be image-only or encrypted")
-        logger.info("[Tier 3] PyMuPDF extraction: %d characters", len(text))
+        logger.info("[Tier 2: PyMuPDF] Extraction successful: %d characters", len(text))
         return text
     except ImportError:
         raise RuntimeError("PyMuPDF is not installed. Add 'pymupdf' to pyproject.toml dependencies.")
     except Exception as e:
-        logger.error("[Tier 3] PyMuPDF failed: %s", e)
+        logger.error("[Tier 2: PyMuPDF] Failed: %s", e)
+        raise
+
+
+# ══════════════════════════════════════════════════════════════════════
+# TIER 3: Docling (local, heavy OCR fallback for scanned PDFs)
+# ══════════════════════════════════════════════════════════════════════
+
+async def _extract_with_docling(file_path: str) -> str:
+    """
+    Extract text using Docling (local OCR + layout analysis).
+    Runs in a thread to avoid blocking the async event loop.
+    """
+    logger.info("[Tier 3: Docling] Extracting with Docling OCR: %s", file_path)
+
+    def _run_docling() -> str:
+        from docling.document_converter import DocumentConverter
+        converter = DocumentConverter()
+        result = converter.convert(file_path)
+        return result.document.export_to_markdown()
+
+    try:
+        text = await asyncio.to_thread(_run_docling)
+        if not text or not text.strip():
+            raise RuntimeError("Docling returned empty text")
+        logger.info("[Tier 3: Docling] Docling extraction successful: %d characters", len(text))
+        return text
+    except ImportError:
+        raise RuntimeError("Docling is not installed. Add 'docling' to pyproject.toml dependencies.")
+    except Exception as e:
+        logger.error("[Tier 3: Docling] Docling failed: %s", e)
         raise
 
 
@@ -185,10 +193,12 @@ async def _extract_with_pymupdf(file_path: str) -> str:
 
 async def _extract_text_tiered(file_path: str, file_type: str) -> tuple[str, str]:
     """
-    Try extraction tiers in order. Returns (extracted_text, method_used).
+    Try extraction tiers in order:
+    1. Gemini File API (multimodal + LaTeX + tables)
+    2. PyMuPDF (instant < 0.1s digital text fallback)
+    3. Docling (heavy local OCR fallback for scanned PDFs)
 
-    method_used is one of: "gemini", "docling", "pymupdf_text_only"
-    If pymupdf_text_only, the caller should flag the content in metadata.
+    Returns (extracted_text, method_used).
     """
     errors: list[str] = []
 
@@ -198,26 +208,26 @@ async def _extract_text_tiered(file_path: str, file_type: str) -> tuple[str, str
             text = await _extract_with_gemini(file_path)
             return text, "gemini"
         except Exception as e:
-            logger.warning("[Extraction] Tier 1 (Gemini) failed: %s. Trying Tier 2...", e)
+            logger.warning("[Extraction] Tier 1 (Gemini) failed: %s. Trying Tier 2 (PyMuPDF)...", e)
             errors.append(f"Tier 1 (Gemini): {e}")
     else:
         logger.warning("[Extraction] Skipping Tier 1 — no INGESTION keys configured")
         errors.append("Tier 1 (Gemini): No API keys configured")
 
-    # Tier 2 — Docling (local, handles tables)
-    try:
-        text = await _extract_with_docling(file_path)
-        return text, "docling"
-    except Exception as e:
-        logger.warning("[Extraction] Tier 2 (Docling) failed: %s. Trying Tier 3...", e)
-        errors.append(f"Tier 2 (Docling): {e}")
-
-    # Tier 3 — PyMuPDF (text-only, last resort)
+    # Tier 2 — PyMuPDF (instant local digital text)
     try:
         text = await _extract_with_pymupdf(file_path)
         return text, "pymupdf_text_only"
     except Exception as e:
-        errors.append(f"Tier 3 (PyMuPDF): {e}")
+        logger.warning("[Extraction] Tier 2 (PyMuPDF) failed: %s. Trying Tier 3 (Docling)...", e)
+        errors.append(f"Tier 2 (PyMuPDF): {e}")
+
+    # Tier 3 — Docling (heavy OCR for scanned/complex PDFs)
+    try:
+        text = await _extract_with_docling(file_path)
+        return text, "docling"
+    except Exception as e:
+        errors.append(f"Tier 3 (Docling): {e}")
 
     # All tiers failed
     raise RuntimeError(
@@ -323,27 +333,22 @@ async def _process_file_async(file_id: str) -> None:
                 f"Embedding mismatch: got {len(all_embeddings)} embeddings for {len(chunk_records)} chunks"
             )
 
-        # 6. Store in ChromaDB
-        logger.info("[ingestion] Storing %d vectors in ChromaDB...", len(chunk_records))
-        metadatas = [
-            {
-                "file_id": file_id,
-                "file_name": original_name,
-                "file_type": file_type,
-                "classroom_id": classroom_id,
-                "doc_type": doc_type,
-                "uploaded_by": uploaded_by,
-                "extraction_method": extraction_method,  # Track which tier was used
-            }
-            for _ in chunk_records
-        ]
+        # 6. Store in MongoDB Atlas Vector Search
+        logger.info("[ingestion] Storing %d vectors in Atlas Vector Search...", len(chunk_records))
+        metadata = {
+            "file_id": file_id,
+            "file_name": original_name,
+            "file_type": file_type,
+            "classroom_id": classroom_id,
+            "doc_type": doc_type,
+            "uploaded_by": uploaded_by,
+            "extraction_method": extraction_method,
+        }
 
-        collection = get_chroma_collection()
-        collection.upsert(
-            ids=[r["id"] for r in chunk_records],
-            documents=[r["text"] for r in chunk_records],
+        await upsert_chunks(
+            chunk_records=chunk_records,
             embeddings=all_embeddings,
-            metadatas=metadatas,
+            metadata=metadata,
         )
 
         # 7. Mark complete in MongoDB
@@ -365,14 +370,19 @@ async def _process_file_async(file_id: str) -> None:
         )
         logger.info("[ingestion] ✓ Completed file_id=%s via %s", file_id, extraction_method)
 
-        # 8. Notify frontend via WebSocket
-        await manager.publish_update(classroom_id, {
-            "type": "file_processed",
-            "file_id": file_id,
-            "status": "ready",
-            "extraction_method": extraction_method,
-            "warning": "pymupdf_text_only" if extraction_method == "pymupdf_text_only" else None,
-        })
+        # 8. Notify frontend via WebSocket (non-fatal — file is already stored successfully)
+        try:
+            await manager.publish_update(classroom_id, {
+                "type": "file_processed",
+                "file_id": file_id,
+                "status": "ready",
+                "extraction_method": extraction_method,
+                "warning": "pymupdf_text_only" if extraction_method == "pymupdf_text_only" else None,
+            })
+        except Exception as ws_err:
+            logger.warning(
+                "[ingestion] WebSocket publish skipped (non-fatal, file already stored): %s", ws_err
+            )
 
     except Exception as exc:
         logger.exception("[ingestion] ✗ Failed file_id=%s: %s", file_id, exc)
@@ -387,7 +397,7 @@ async def _process_file_async(file_id: str) -> None:
             },
         )
 
-        # Notify frontend of failure
+        # Notify frontend of failure (non-fatal)
         try:
             await manager.publish_update(classroom_id, {
                 "type": "file_processed",
@@ -395,8 +405,10 @@ async def _process_file_async(file_id: str) -> None:
                 "status": "failed",
                 "error": str(exc)[:200],
             })
-        except Exception:
-            pass
+        except Exception as ws_err:
+            logger.warning(
+                "[ingestion] WebSocket failure-publish skipped (non-fatal): %s", ws_err
+            )
 
         raise  # Re-raise so Celery can handle retry logic
 
@@ -424,12 +436,16 @@ def process_file_task(file_id: str):
     """
     async def _run():
         from database.mongo import connect_db, close_db
-        from database.chroma import connect_chroma
+        from database.redis import RedisManager
         await connect_db()
-        connect_chroma()
         try:
             await _process_file_async(file_id)
         finally:
             await close_db()
+            # Reset the redis.asyncio singleton so the next asyncio.run() invocation
+            # (i.e. the next Celery task) always gets a fresh client bound to its
+            # own event loop.  Without this, the stale client causes
+            # 'Event loop is closed' on every retry.
+            await RedisManager.close()
 
     asyncio.run(_run())

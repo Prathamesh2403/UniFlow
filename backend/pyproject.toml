@@ -31,4 +31,5 @@ dependencies = [
     "ddgs>=6.4.0",
     "slowapi>=0.1.9",
     "email-validator>=2.1.0",
+    "cloudinary>=1.41.0",
 ]

@@ -28,7 +28,7 @@ load_dotenv()
 from google import genai
 from google.genai import types
 
-from database.chroma import get_chroma_collection
+from database.vector import vector_search
 from database.mongo import get_db
 from core.llm_router import (
     call_gemini_with_fallback,
@@ -90,7 +90,7 @@ logger = logging.getLogger(__name__)
 EMBED_MODEL = "models/gemini-embedding-001"
 # RELEVANCE_THRESHOLD: minimum cosine similarity to treat a chunk as relevant.
 # Chunks below this score are silently dropped and never shown to the user.
-RELEVANCE_THRESHOLD = 0.35
+RELEVANCE_THRESHOLD = 0.28
 
 
 def _get_embed_client() -> genai.Client:
@@ -448,27 +448,21 @@ async def retriever_vector_node(state: dict) -> dict:
 
     logger.info("[retriever_node] filter=%s", where_filter)
 
-    # ── Query ChromaDB ────────────────────────────────────────────
+    # ── Query Atlas Vector Search ─────────────────────────────────
     try:
-        results = await asyncio.to_thread(
-            collection.query,
-            query_embeddings=[state["query_embedding"]],
-            n_results=8,
+        results = await vector_search(
+            query_embedding=state["query_embedding"],
             where=where_filter,
-            include=["documents", "metadatas", "distances"],
+            n_results=8,
         )
 
         # Fallback: if scoped search yielded 0, expand to all enrolled
-        if (not results.get("documents") or not results["documents"][0]) \
-                and scope.scope_classroom_id and profile.enrolled_classroom_ids:
+        if not results and scope.scope_classroom_id and profile.enrolled_classroom_ids:
             logger.info("[retriever_node] Scoped search empty — expanding to all classrooms")
-            where_filter = {"classroom_id": {"$in": profile.enrolled_classroom_ids}}
-            results = await asyncio.to_thread(
-                collection.query,
-                query_embeddings=[state["query_embedding"]],
+            results = await vector_search(
+                query_embedding=state["query_embedding"],
+                where={"classroom_id": {"$in": profile.enrolled_classroom_ids}},
                 n_results=8,
-                where=where_filter,
-                include=["documents", "metadatas", "distances"],
             )
     except Exception as e:
         logger.error("[retriever_node] ChromaDB query failed: %s", e)
@@ -481,30 +475,26 @@ async def retriever_vector_node(state: dict) -> dict:
         }
 
     # ── Parse + apply relevance threshold ────────────────────────
-    documents = results.get("documents", [[]])[0]
-    metadatas = results.get("metadatas", [[]])[0]
-    distances = results.get("distances", [[]])[0]
-
     retrieved_chunks: list[RetrievedChunk] = []
     used_sources: list[dict] = []
 
-    for doc, meta, dist in zip(documents, metadatas, distances):
-        score = round(1 - dist, 4)
+    for item in results:
+        score = round(item.get("score", 0), 4)
 
-        # Hard relevance gate — low-scoring chunks are NOT passed to synthesis
+        # Hard relevance gate
         if score < RELEVANCE_THRESHOLD:
             logger.debug("[retriever_node] Dropping chunk score=%.4f file=%s",
-                         score, meta.get("file_name", "?"))
+                         score, item.get("file_name", "?"))
             continue
 
         chunk = RetrievedChunk(
-            text=doc,
-            source_file=meta.get("file_name", "Unknown"),
-            file_type=meta.get("file_type", "unknown"),
-            page_number=meta.get("page_number"),
-            timestamp_start=meta.get("timestamp_start"),
-            timestamp_end=meta.get("timestamp_end"),
-            subject=meta.get("subject"),
+            text=item.get("text", ""),
+            source_file=item.get("file_name", "Unknown"),
+            file_type=item.get("file_type", "unknown"),
+            page_number=item.get("page_number"),
+            timestamp_start=item.get("timestamp_start"),
+            timestamp_end=item.get("timestamp_end"),
+            subject=item.get("subject"),
             relevance_score=score,
         )
         retrieved_chunks.append(chunk)
@@ -528,6 +518,7 @@ async def retriever_vector_node(state: dict) -> dict:
     return {
         "retrieved_chunks": retrieved_chunks,
         "used_sources": used_sources,        # Only threshold-passing chunks
+        "recent_files_context": recent_files,
         "no_chunks_found": no_chunks,
         "processing_status": "generating",
         "reasoning": state.get("reasoning", []) + [

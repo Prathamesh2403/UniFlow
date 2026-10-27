@@ -1,14 +1,15 @@
-"""Upload router – multi-modal file upload with streaming SHA-256 dedup."""
+"""Upload router – multi-modal file upload with Cloudinary storage + streaming SHA-256 dedup."""
 
 import hashlib
 import logging
 import os
-import shutil
 from datetime import datetime, timezone
 from pathlib import Path
 from uuid import uuid4
 
 import aiofiles
+import cloudinary
+import cloudinary.uploader
 from fastapi import (
     APIRouter,
     Depends,
@@ -19,10 +20,18 @@ from fastapi import (
     UploadFile,
     status,
 )
-from fastapi.responses import FileResponse
 
 from api.dependencies import get_current_user, require_classroom_member
+from core.config import settings
 from database.mongo import get_db
+
+# Configure Cloudinary from settings
+cloudinary.config(
+    cloud_name=settings.CLOUDINARY_CLOUD_NAME,
+    api_key=settings.CLOUDINARY_API_KEY,
+    api_secret=settings.CLOUDINARY_API_SECRET,
+    secure=True,
+)
 
 router = APIRouter(prefix="/api/upload", tags=["Upload"])
 files_router = APIRouter(prefix="/api/files", tags=["Files"])
@@ -30,9 +39,8 @@ logger = logging.getLogger(__name__)
 
 # ── Constants ────────────────────────────────────────────────────────
 
-STORAGE_BASE = Path("storage")
-TEMP_DIR = STORAGE_BASE / "temp"
-UPLOAD_DIR = STORAGE_BASE / "uploads"
+TEMP_DIR = Path("storage/temp")
+TEMP_DIR.mkdir(parents=True, exist_ok=True)
 
 PDF_MIMES = ["application/pdf"]
 IMAGE_MIMES = ["image/png", "image/jpeg", "image/jpg", "image/webp"]
@@ -44,7 +52,12 @@ STUDENT_ALLOWED = PDF_MIMES + IMAGE_MIMES
 CHUNK_SIZE = 8192
 MAX_FILE_SIZE = 15 * 1024 * 1024  # 15 MB hard limit
 
-_STATIC_DIRS = {"pdf": "pdfs", "image": "images", "video": "videos"}
+# Cloudinary resource_type map
+_CLOUDINARY_RESOURCE_TYPE = {
+    "pdf": "raw",
+    "image": "image",
+    "video": "video",
+}
 
 
 def _mime_to_file_type(mime: str) -> str:
@@ -58,11 +71,8 @@ def _mime_to_file_type(mime: str) -> str:
 
 
 def _build_playback_url(file_doc: dict) -> str:
-    ft = file_doc.get("file_type", "pdf")
-    folder = _STATIC_DIRS.get(ft, "pdfs")
-    original = file_doc.get("original_name", "file.bin")
-    ext = Path(original).suffix or ".bin"
-    return f"/static/{folder}/{file_doc['file_id']}{ext}"
+    """Return Cloudinary secure URL stored in storage_path (cloudinary_url field)."""
+    return file_doc.get("cloudinary_url") or file_doc.get("storage_path", "")
 
 
 # ── POST /api/upload/file ────────────────────────────────────────────

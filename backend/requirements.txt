@@ -1,0 +1,26 @@
+# UniFlow Production Dependencies (Render / Cloud deployment)
+# Lightweight, high-performance, and fits within 512MB RAM free tier limit.
+
+fastapi>=0.115.0
+uvicorn[standard]>=0.30.0
+pydantic>=2.8.0
+pydantic-settings>=2.4.0
+motor>=3.5.0
+pymongo>=4.8.0
+redis>=5.0.0
+google-genai>=1.0.0
+langgraph>=0.2.0
+langchain-core>=0.3.0
+langchain-text-splitters>=0.3.0
+aiofiles>=24.1.0
+python-multipart>=0.0.9
+pyjwt[crypto]>=2.9.0
+passlib[bcrypt]>=1.7.4
+pymupdf>=1.24.0
+python-dotenv>=1.0.0
+cloudinary>=1.41.0
+celery>=5.4.0
+ddgs>=6.4.0
+slowapi>=0.1.9
+email-validator>=2.1.0
+pillow>=10.4.0

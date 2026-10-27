@@ -182,6 +182,7 @@ async def chat_message(
             "query_embedding": None,
             "retrieved_chunks": [],
             "used_sources": [],
+            "recent_files_context": [],
             "no_chunks_found": False,
             "web_search_results": [],
             "fast_reject_response": None,
@@ -309,8 +310,9 @@ async def chat_message(
             )
 
             # ── Step 4: Cache the response ──────────────────────────
-            # Only cache RAG/CONVERSATIONAL — web search results age out quickly
-            if intent in ("RAG_SEARCH", "CONVERSATIONAL"):
+            # Only cache RAG when valid sources were found, or CONVERSATIONAL
+            # Do NOT cache generic 'no_chunks_found' fallback responses
+            if (intent == "CONVERSATIONAL") or (intent == "RAG_SEARCH" and used_sources and not final_state.get("no_chunks_found")):
                 try:
                     await redis_client.setex(
                         cache_key,

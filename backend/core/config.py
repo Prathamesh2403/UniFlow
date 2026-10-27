@@ -5,7 +5,6 @@ from pydantic_settings import BaseSettings
 
 class Settings(BaseSettings):
     # ── MongoDB ──────────────────────────────────────────────────────
-    # Full URI (includes auth when using Docker with auth enabled)
     MONGO_URI: str = "mongodb://localhost:27017"
     MONGO_DB: str = "uniflow"
 
@@ -17,6 +16,17 @@ class Settings(BaseSettings):
     # ── Superadmin seed ──────────────────────────────────────────────
     SUPERADMIN_EMAIL: str = "admin@uniflow.local"
     SUPERADMIN_PASSWORD: str = "changeme-in-production"
+
+    # ── Cloudinary (file storage) ─────────────────────────────────────
+    CLOUDINARY_CLOUD_NAME: str = ""
+    CLOUDINARY_API_KEY: str = ""
+    CLOUDINARY_API_SECRET: str = ""
+
+    # ── Redis ─────────────────────────────────────────────────────────
+    REDIS_URL: str = "redis://localhost:6379/0"
+
+    # ── Frontend / CORS ──────────────────────────────────────────────
+    FRONTEND_URL: str = ""
 
     model_config = {
         "env_file": ".env",

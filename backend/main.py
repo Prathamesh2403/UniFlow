@@ -13,7 +13,6 @@ from fastapi.staticfiles import StaticFiles
 from core.config import settings
 from core.security import hash_password
 from database.mongo import connect_db, close_db, get_db
-from database.chroma import connect_chroma
 from database.redis import get_redis
 from core.websocket import manager
 import asyncio
@@ -99,9 +98,8 @@ async def lifespan(app: FastAPI):
 
     print("[OK] MongoDB connected & all indexes ensured")
 
-    # ── 3. Connect ChromaDB ────────────────────────────────────────
-    connect_chroma()
-    print("[OK] ChromaDB connected (campus_vectors collection ready)")
+    # ── 3. Atlas Vector Search ────────────────────────────────────
+    print("[OK] Atlas Vector Search ready (vectors collection)")
 
     # ── 4. Start WebSocket Redis listener ─────────────────────────
     asyncio.create_task(manager.listen_to_redis())
@@ -126,17 +124,22 @@ app = FastAPI(
 )
 
 # ── CORS ─────────────────────────────────────────────────────────────
-# Explicit origins — never use ["*"] with allow_credentials=True
-# (browsers reject it, and it's insecure)
+# Dynamic CORS: include localhost + FRONTEND_URL + Vercel deployment domains
 ALLOWED_ORIGINS = [
     "http://localhost:3000",
     "http://localhost:3001",
     "http://127.0.0.1:3000",
 ]
+if settings.FRONTEND_URL:
+    for url in settings.FRONTEND_URL.split(","):
+        cleaned = url.strip()
+        if cleaned and cleaned not in ALLOWED_ORIGINS:
+            ALLOWED_ORIGINS.append(cleaned)
 
 app.add_middleware(
     CORSMiddleware,
     allow_origins=ALLOWED_ORIGINS,
+    allow_origin_regex=r"^https://.*\.vercel\.app$",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -293,14 +296,13 @@ async def health_check():
     except Exception as e:
         checks["redis"] = f"error: {str(e)[:100]}"
 
-    # ChromaDB
+    # Atlas Vector Search
     try:
-        from database.chroma import get_chroma_collection
-        col = get_chroma_collection()
-        _ = col.count()
-        checks["chromadb"] = "ok"
+        from database.vector import VECTOR_COLLECTION
+        await db[VECTOR_COLLECTION].find_one({}, {"_id": 1})
+        checks["atlas_vector_search"] = "ok"
     except Exception as e:
-        checks["chromadb"] = f"error: {str(e)[:100]}"
+        checks["atlas_vector_search"] = f"error: {str(e)[:100]}"
 
     overall = "ok" if all(v == "ok" for v in checks.values()) else "degraded"
     return {"status": overall, "checks": checks}
