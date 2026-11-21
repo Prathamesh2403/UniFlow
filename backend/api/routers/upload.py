@@ -171,11 +171,17 @@ async def upload_file(
     cloudinary_url = None
 
     if settings.CLOUDINARY_CLOUD_NAME and settings.CLOUDINARY_API_KEY and settings.CLOUDINARY_API_SECRET:
+        # Use explicit resource_type per file type:
+        # PDFs → "raw" (publicly accessible, downloadable URL)
+        # images → "image", videos → "video"
+        # NEVER use "auto" for PDFs — Cloudinary classifies them as "image" and
+        # restricts access, returning 401 when the Celery worker tries to download.
+        cld_resource_type = _CLOUDINARY_RESOURCE_TYPE.get(file_type, "raw")
         try:
             res = await asyncio.to_thread(
                 cloudinary.uploader.upload,
                 str(temp_path),
-                resource_type="auto",
+                resource_type=cld_resource_type,
                 folder=f"uniflow/{classroom_id}",
                 public_id=file_id,
             )
