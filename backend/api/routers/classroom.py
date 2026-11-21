@@ -259,28 +259,19 @@ async def delete_classroom(
     ):
         raise HTTPException(status_code=403, detail="Only the classroom creator can delete it")
 
-    # ── Cascade 1: Files (disk + ChromaDB vectors + MongoDB metadata) ──
+    # ── Cascade 1: Files (Atlas Vector Search + MongoDB metadata) ──
     try:
-        from database.chroma import get_chroma_collection
-        collection = get_chroma_collection()
+        from database.vector import delete_chunks_by_file
 
         files_cursor = db.file_metadata.find({"classroom_id": classroom_id})
         files = await files_cursor.to_list(length=1000)
 
         for f in files:
-            # Delete physical file from disk
-            storage_path = f.get("storage_path")
-            if storage_path and os.path.exists(storage_path):
-                try:
-                    os.remove(storage_path)
-                except Exception as e:
-                    logger.warning("[delete_classroom] Could not delete file %s: %s", storage_path, e)
-
-            # Delete ChromaDB vectors for this file
+            # Delete Atlas Vector Search chunks for this file
             try:
-                collection.delete(where={"file_id": f["file_id"]})
+                await delete_chunks_by_file(f["file_id"])
             except Exception as e:
-                logger.warning("[delete_classroom] Could not delete Chroma vectors for %s: %s", f["file_id"], e)
+                logger.warning("[delete_classroom] Could not delete vectors for %s: %s", f["file_id"], e)
 
         await db.file_metadata.delete_many({"classroom_id": classroom_id})
         logger.info("[delete_classroom] Deleted %d files for classroom %s", len(files), classroom_id)

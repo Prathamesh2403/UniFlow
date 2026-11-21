@@ -11,7 +11,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
 
 from api.dependencies import get_current_user
-from database.chroma import get_chroma_collection
+from database.vector import delete_chunks_by_file
 from database.mongo import get_db
 from core.websocket import manager
 
@@ -173,22 +173,13 @@ async def delete_announcement(
         file_meta = await db.file_metadata.find_one({"file_id": file_id})
 
         if file_meta:
-            # 1. Delete physical file
-            storage_path = file_meta.get("storage_path")
-            if storage_path and os.path.exists(storage_path):
-                try:
-                    os.remove(storage_path)
-                except Exception as e:
-                    logger.warning("[delete_announcement] Could not delete file %s: %s", storage_path, e)
-
-            # 2. Delete ChromaDB vectors
+            # 1. Delete Atlas Vector Search chunks
             try:
-                collection = get_chroma_collection()
-                collection.delete(where={"file_id": file_id})
+                await delete_chunks_by_file(file_id)
             except Exception as e:
                 logger.warning("[delete_announcement] Could not delete vectors for %s: %s", file_id, e)
 
-            # 3. Delete file metadata
+            # 2. Delete file metadata
             await db.file_metadata.delete_one({"file_id": file_id})
 
     await db.announcements.delete_one({"announcement_id": announcement_id})
