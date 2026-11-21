@@ -97,7 +97,7 @@ class GeminiKeyManager:
             self._idx += 1
             if idx not in self._unhealthy:
                 key = self.keys[idx]
-                return genai.Client(api_key=key), key
+                return genai.Client(api_key=key, http_options={"api_version": "v1beta"}), key
 
         # All keys in penalty box — back off and retry
         wait = 5
