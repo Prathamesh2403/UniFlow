@@ -269,7 +269,8 @@ async def router_node(state: AgentState) -> dict:
                 system_instruction=ROUTER_SYSTEM_PROMPT,
                 response_mime_type="application/json",
                 temperature=0.0,
-                max_output_tokens=150,
+                max_output_tokens=500,
+                thinking_config=types.ThinkingConfig(thinking_budget=0),
             ),
             key_pool=router_key_manager,  # Use the cheap isolated ROUTER pool
         )
