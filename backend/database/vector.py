@@ -126,6 +126,8 @@ async def vector_search(
             filter_conditions.append({"classroom_id": {"$in": val["$in"]}})
         elif isinstance(val, dict) and "$nin" in val:
             filter_conditions.append({"classroom_id": {"$nin": val["$nin"]}})
+        elif isinstance(val, dict) and "$eq" in val:
+            filter_conditions.append({"classroom_id": {"$eq": val["$eq"]}})
         elif isinstance(val, str):
             filter_conditions.append({"classroom_id": {"$eq": val}})
 
@@ -133,6 +135,8 @@ async def vector_search(
         val = where["file_id"]
         if isinstance(val, dict) and "$in" in val:
             filter_conditions.append({"file_id": {"$in": val["$in"]}})
+        elif isinstance(val, dict) and "$eq" in val:
+            filter_conditions.append({"file_id": {"$eq": val["$eq"]}})
         elif isinstance(val, str):
             filter_conditions.append({"file_id": {"$eq": val}})
 
@@ -148,6 +152,8 @@ async def vector_search(
         vector_search_stage["filter"] = filter_conditions[0]
     elif len(filter_conditions) > 1:
         vector_search_stage["filter"] = {"$and": filter_conditions}
+
+    logger.info("[vector] Running $vectorSearch with filter: %s", vector_search_stage.get("filter"))
 
     pipeline: list[dict] = [
         {"$vectorSearch": vector_search_stage},

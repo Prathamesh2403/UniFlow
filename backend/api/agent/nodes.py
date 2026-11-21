@@ -454,6 +454,7 @@ async def retriever_vector_node(state: dict) -> dict:
             where=where_filter,
             n_results=8,
         )
+        logger.info("[retriever_node] Scoped vector_search returned %d raw candidates", len(results))
 
         # Fallback: if scoped search yielded 0, expand to all enrolled
         if not results and scope.scope_classroom_id and profile.enrolled_classroom_ids:
@@ -463,8 +464,9 @@ async def retriever_vector_node(state: dict) -> dict:
                 where={"classroom_id": {"$in": profile.enrolled_classroom_ids}},
                 n_results=8,
             )
+            logger.info("[retriever_node] Expanded vector_search returned %d raw candidates", len(results))
     except Exception as e:
-        logger.error("[retriever_node] Atlas Vector Search query failed: %s", e)
+        logger.exception("[retriever_node] Atlas Vector Search query failed: %s", e)
         return {
             "retrieved_chunks": [],
             "used_sources": [],
@@ -479,11 +481,13 @@ async def retriever_vector_node(state: dict) -> dict:
 
     for item in results:
         score = round(item.get("score", 0), 4)
+        logger.info("[retriever_node] Candidate chunk: file=%s score=%.4f (threshold=%.2f)",
+                    item.get("file_name"), score, RELEVANCE_THRESHOLD)
 
         # Hard relevance gate
         if score < RELEVANCE_THRESHOLD:
-            logger.debug("[retriever_node] Dropping chunk score=%.4f file=%s",
-                         score, item.get("file_name", "?"))
+            logger.info("[retriever_node] Dropping chunk score=%.4f file=%s (< %.2f)",
+                        score, item.get("file_name", "?"), RELEVANCE_THRESHOLD)
             continue
 
         chunk = RetrievedChunk(
