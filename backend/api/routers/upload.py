@@ -22,6 +22,7 @@ from fastapi import (
     UploadFile,
     status,
 )
+from fastapi.responses import FileResponse
 
 from api.dependencies import get_current_user, require_classroom_member
 from core.config import settings
