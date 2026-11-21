@@ -1,8 +1,10 @@
 """Upload router – multi-modal file upload with Cloudinary storage + streaming SHA-256 dedup."""
 
+import asyncio
 import hashlib
 import logging
 import os
+import shutil
 from datetime import datetime, timezone
 from pathlib import Path
 from uuid import uuid4
@@ -163,24 +165,45 @@ async def upload_file(
             "status": status_str,
         }
 
-    # ⑥ Move to permanent storage
+    # ⑥ Cloudinary Upload / Permanent storage
     file_id = f"file_{uuid4().hex}"
-    permanent_dir = UPLOAD_DIR / f"{file_type}s"
+    cloudinary_url = None
+
+    if settings.CLOUDINARY_CLOUD_NAME and settings.CLOUDINARY_API_KEY and settings.CLOUDINARY_API_SECRET:
+        try:
+            res = await asyncio.to_thread(
+                cloudinary.uploader.upload,
+                str(temp_path),
+                resource_type="auto",
+                folder=f"uniflow/{classroom_id}",
+                public_id=file_id,
+            )
+            cloudinary_url = res.get("secure_url")
+        except Exception as e:
+            logger.error("[upload] Cloudinary upload failed: %s", e)
+            temp_path.unlink(missing_ok=True)
+            raise HTTPException(status_code=500, detail=f"Cloudinary upload failed: {e}")
+
+    # Also keep a local copy for immediate processing if disk allows
+    permanent_dir = Path("storage/uploads") / f"{file_type}s"
     permanent_dir.mkdir(parents=True, exist_ok=True)
     permanent_path = permanent_dir / f"{file_id}{ext}"
-
     try:
-        shutil.move(str(temp_path), str(permanent_path))
+        shutil.copyfile(str(temp_path), str(permanent_path))
     except Exception as e:
+        logger.warning("[upload] Local copy skipped/failed: %s", e)
+    finally:
         temp_path.unlink(missing_ok=True)
-        raise HTTPException(status_code=500, detail=f"Failed to save file: {e}")
+
+    storage_path = cloudinary_url or str(permanent_path)
 
     # ⑦ Save metadata to MongoDB (using timezone-aware datetime)
     now = datetime.now(timezone.utc)
     doc = {
         "file_id": file_id,
         "original_name": file.filename,
-        "storage_path": str(permanent_path),
+        "storage_path": storage_path,
+        "cloudinary_url": cloudinary_url,
         "mime_type": mime,
         "file_type": file_type,
         "file_size_bytes": file_size,

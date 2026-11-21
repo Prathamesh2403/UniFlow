@@ -129,10 +129,11 @@ ALLOWED_ORIGINS = [
     "http://localhost:3000",
     "http://localhost:3001",
     "http://127.0.0.1:3000",
+    "https://uni-flow-seven.vercel.app",
 ]
 if settings.FRONTEND_URL:
     for url in settings.FRONTEND_URL.split(","):
-        cleaned = url.strip()
+        cleaned = url.strip().rstrip("/")
         if cleaned and cleaned not in ALLOWED_ORIGINS:
             ALLOWED_ORIGINS.append(cleaned)
 

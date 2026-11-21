@@ -264,11 +264,30 @@ async def _process_file_async(file_id: str) -> None:
         {"$set": {"processing.status": "processing", "processing.error": None}},
     )
 
+    local_file_path = storage_path
+    is_temp_download = False
+
     try:
+        # If storage_path is a remote URL (Cloudinary), download it to a temp file for local extraction
+        if storage_path.startswith("http://") or storage_path.startswith("https://"):
+            import httpx
+            import tempfile
+            ext = Path(original_name).suffix or ".bin"
+            with tempfile.NamedTemporaryFile(delete=False, suffix=ext) as tf:
+                local_file_path = tf.name
+                is_temp_download = True
+
+            logger.info("[ingestion] Downloading remote file %s to %s", storage_path, local_file_path)
+            async with httpx.AsyncClient() as client:
+                resp = await client.get(storage_path, follow_redirects=True)
+                resp.raise_for_status()
+                with open(local_file_path, "wb") as f:
+                    f.write(resp.content)
+
         # 3. Extract text (3-tier cascade)
         logger.info("[ingestion] Starting extraction for %s (%s)", original_name, file_type)
         t_start = time.time()
-        full_text, extraction_method = await _extract_text_tiered(storage_path, file_type)
+        full_text, extraction_method = await _extract_text_tiered(local_file_path, file_type)
         t_extract = time.time() - t_start
         logger.info("[ingestion] Extracted %d chars using %s in %.1fs",
                     len(full_text), extraction_method, t_extract)
@@ -411,6 +430,12 @@ async def _process_file_async(file_id: str) -> None:
             )
 
         raise  # Re-raise so Celery can handle retry logic
+    finally:
+        if is_temp_download and local_file_path and os.path.exists(local_file_path):
+            try:
+                os.remove(local_file_path)
+            except Exception:
+                pass
 
 
 # ══════════════════════════════════════════════════════════════════════
