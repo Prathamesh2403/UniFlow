@@ -271,6 +271,7 @@ async def _process_file_async(file_id: str) -> None:
     try:
         # If storage_path is a remote URL (Cloudinary), download it to a temp file for local extraction
         if storage_path.startswith("http://") or storage_path.startswith("https://"):
+            import re
             import httpx
             import tempfile
             ext = Path(original_name).suffix or ".bin"
@@ -278,9 +279,46 @@ async def _process_file_async(file_id: str) -> None:
                 local_file_path = tf.name
                 is_temp_download = True
 
-            logger.info("[ingestion] Downloading remote file %s to %s", storage_path, local_file_path)
-            async with httpx.AsyncClient() as client:
-                resp = await client.get(storage_path, follow_redirects=True)
+            download_url = storage_path
+
+            # Cloudinary URLs: generate a signed download URL using the Admin API.
+            # This bypasses "Restrict raw files" account-level security settings
+            # and works regardless of the resource's access_mode.
+            if "res.cloudinary.com" in storage_path:
+                try:
+                    import cloudinary
+                    import cloudinary.utils
+                    from core.config import settings as _cld_settings
+                    cloudinary.config(
+                        cloud_name=_cld_settings.CLOUDINARY_CLOUD_NAME,
+                        api_key=_cld_settings.CLOUDINARY_API_KEY,
+                        api_secret=_cld_settings.CLOUDINARY_API_SECRET,
+                        secure=True,
+                    )
+                    # Extract public_id: everything after /upload/v{digits}/
+                    match = re.search(r"/upload/v\d+/(.+)$", storage_path)
+                    if match:
+                        public_id = match.group(1)  # e.g. "uniflow/cls_xxx/file_xxx.pdf"
+                        cld_resource_type = "raw" if file_type == "pdf" else file_type
+                        # private_download_url generates a signed URL via Cloudinary Admin API
+                        # which always has access regardless of account security settings
+                        download_url = cloudinary.utils.private_download_url(
+                            public_id,
+                            "",   # format is embedded in public_id for raw resources
+                            resource_type=cld_resource_type,
+                            attachment=False,
+                        )
+                        logger.info("[ingestion] Generated signed Cloudinary download URL for %s", file_id)
+                except Exception as sign_err:
+                    logger.warning(
+                        "[ingestion] Could not generate signed Cloudinary URL (%s). Falling back to raw URL.",
+                        sign_err,
+                    )
+                    download_url = storage_path
+
+            logger.info("[ingestion] Downloading remote file → %s", local_file_path)
+            async with httpx.AsyncClient(timeout=60.0) as client:
+                resp = await client.get(download_url, follow_redirects=True)
                 resp.raise_for_status()
                 with open(local_file_path, "wb") as f:
                     f.write(resp.content)
