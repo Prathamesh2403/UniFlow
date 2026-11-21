@@ -202,7 +202,9 @@ async def upload_file(
     finally:
         temp_path.unlink(missing_ok=True)
 
-    storage_path = cloudinary_url or str(permanent_path)
+    # Prefer local disk path for instant Celery processing (FastAPI and Celery share disk).
+    # Cloudinary URL is preserved in doc["cloudinary_url"] for web clients / remote access.
+    storage_path = str(permanent_path) if permanent_path.exists() else (cloudinary_url or str(permanent_path))
 
     # ⑦ Save metadata to MongoDB (using timezone-aware datetime)
     now = datetime.now(timezone.utc)
@@ -350,15 +352,21 @@ async def download_file(
     if current_user["role"] != "superadmin":
         await require_classroom_member(doc.get("classroom_id", ""), current_user["user_id"])
 
-    file_path = Path(doc["storage_path"])
-    if not file_path.exists():
-        raise HTTPException(status_code=404, detail="File content not found on server")
+    file_path = Path(doc.get("storage_path", ""))
+    if file_path.exists():
+        return FileResponse(
+            path=file_path,
+            filename=doc["original_name"],
+            media_type=doc["mime_type"],
+        )
 
-    return FileResponse(
-        path=file_path,
-        filename=doc["original_name"],
-        media_type=doc["mime_type"],
-    )
+    # If local file was deleted / instance restarted, redirect to Cloudinary CDN
+    cld_url = doc.get("cloudinary_url")
+    if cld_url:
+        from fastapi.responses import RedirectResponse
+        return RedirectResponse(url=cld_url)
+
+    raise HTTPException(status_code=404, detail="File content not found on server")
 
 
 # ── POST /api/files/{file_id}/retry ─────────────────────────────────
