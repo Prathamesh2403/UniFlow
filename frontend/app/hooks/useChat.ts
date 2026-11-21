@@ -278,6 +278,13 @@ export function useChat() {
 
                                 case "error":
                                     setError(d);
+                                    setMessages((prev) =>
+                                        prev.map((m) =>
+                                            m.id === aiMsgId && !m.content
+                                                ? { ...m, content: `⚠️ ${d}` }
+                                                : m
+                                        )
+                                    );
                                     break;
 
                                 case "done":

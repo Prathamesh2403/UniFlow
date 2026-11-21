@@ -393,15 +393,14 @@ async def _fetch_recent_files_metadata(classroom_id: str, limit: int = 5) -> Lis
 
 async def retriever_vector_node(state: dict) -> dict:
     """
-    Query ChromaDB for top 8 chunks. Filter by RELEVANCE_THRESHOLD.
+    Query Atlas Vector Search for top 8 chunks. Filter by RELEVANCE_THRESHOLD.
     Only emits chunks that actually passed into used_sources.
     """
-    logger.info("[retriever_node] Starting ChromaDB retrieval")
+    logger.info("[retriever_node] Starting Atlas Vector Search retrieval")
 
     scope: RouterOutput = state["router_output"]
     profile: UserProfile = state["user_profile"]
     query_text = state["query"].lower()
-    collection = get_chroma_collection()
     reasoning_msg = "Searching course materials..."
     recent_files = []
 
@@ -465,7 +464,7 @@ async def retriever_vector_node(state: dict) -> dict:
                 n_results=8,
             )
     except Exception as e:
-        logger.error("[retriever_node] ChromaDB query failed: %s", e)
+        logger.error("[retriever_node] Atlas Vector Search query failed: %s", e)
         return {
             "retrieved_chunks": [],
             "used_sources": [],
