@@ -86,11 +86,5 @@ Built on a "state-of-the-art" technical foundation:
 
 ---
 
-## 📚 Learn More
-For a detailed log of the project's evolution and all implemented features from day one, see:
-👉 **[The Full Update Timeline (UPDATES.md)](./UPDATES.md)**
-
----
-
-##  Summary
+## Summary
 UniFlow is more than a classroom hub; it’s an **intelligent ecosystem** for students and teachers. It combines a premium user experience with powerful AI automation to make learning more efficient, interactive, and visually stunning.
