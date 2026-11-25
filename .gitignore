@@ -59,3 +59,7 @@ out/
 *.zip
 *.tar.gz
 *.rar
+
+# Documentation & Architecture Notes
+BACKEND_ARCHITECTURE.md
+PRODUCTION_ARCHITECTURE_AND_POSTMORTEM.md
